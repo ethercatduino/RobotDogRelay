@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#121212" />
+  <title>Robot Dog 遙控器</title>
+  <style>
+    * { box-sizing: border-box; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+    body { margin: 0; background: #121212; color: #fff; font-family: system-ui, sans-serif; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #1c1c1e; font-size: 13px; border-bottom: 1px solid #2c2c2e; }
+    .topbar .btns { display: flex; gap: 6px; }
+    button { background: #2c2c2e; color: #fff; border: 1px solid #3a3a3c; border-radius: 10px; padding: 8px 12px; font-size: 14px; font-weight: 600; touch-action: none; }
+    button:active, button.active { background: #0a84ff; border-color: #409cff; transform: scale(0.96); }
+    button.danger { background: #ff453a; border-color: #ff6961; }
+    .workspace { flex: 1; display: flex; flex-direction: row; padding: 8px; gap: 10px; overflow: hidden; }
+    .left-pane { flex: 1.2; display: flex; flex-direction: column; gap: 8px; }
+    .video-wrap { flex: 1; background: #000; border-radius: 12px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; border: 1px solid #2c2c2e; }
+    .video-wrap img { width: 100%; height: 100%; object-fit: cover; }
+    .quick-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .quick-actions button { padding: 10px 4px; font-size: 12px; }
+    .right-pane { flex: 1; display: flex; flex-direction: column; justify-content: space-between; background: #1c1c1e; padding: 10px; border-radius: 12px; }
+    .dpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; flex: 1; }
+    .dpad button { font-size: 16px; display: flex; align-items: center; justify-content: center; border-radius: 14px; }
+    .sliders { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .slider-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .slider-row input { flex: 1; height: 24px; touch-action: pan-x; }
+    @media (orientation: portrait) {
+      .workspace { flex-direction: column; }
+      .left-pane { flex: 1; }
+      .right-pane { flex: 1.1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span id="status">連線中...</span>
+    <div class="btns">
+      <button onclick="reconnect()">重連</button>
+      <button onclick="toggleVideo()">影像開關</button>
+      <button class="danger" onclick="sendCmd('CMD_RELAX')">放鬆</button>
+    </div>
+  </div>
+
+  <div class="workspace">
+    <div class="left-pane">
+      <div class="video-wrap">
+        <img id="stream" alt="點擊右上角「影像開關」載入畫面" />
+      </div>
+      <div class="quick-actions">
+        <button id="btn-buzzer">🔊 喇叭</button>
+        <button onclick="sendCmd('CMD_SONIC')">📏 測距</button>
+        <button onclick="sendCmd('CMD_POWER')">🔋 電量</button>
+        <button onclick="sendCmd('CMD_BALANCE#1')">⚖️ 平衡</button>
+      </div>
+    </div>
+
+    <div class="right-pane">
+      <div class="dpad">
+        <button data-dir="step_left">↖ 左移</button>
+        <button data-dir="forward">▲ 前進</button>
+        <button data-dir="step_right">↗ 右移</button>
+        <button data-dir="turn_left">↺ 左轉</button>
+        <button class="danger" onclick="stopMove()">停止</button>
+        <button data-dir="turn_right">↻ 右轉</button>
+        <div></div>
+        <button data-dir="backward">▼ 後退</button>
+        <div></div>
+      </div>
+
+      <div class="sliders">
+        <div class="slider-row">
+          <span>頭部</span>
+          <input type="range" min="0" max="180" value="90" oninput="sendCmd('CMD_HEAD#' + this.value)" />
+        </div>
+        <div class="slider-row">
+          <span>身高</span>
+          <input type="range" min="-20" max="20" value="0" oninput="sendCmd('CMD_POSITION#0#0#' + this.value)" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws;
+    let videoOn = false;
+    const statusEl = document.getElementById("status");
+
+    function initWS() {
+      ws = new WebSocket(`ws://${location.host}/ws`);
+      ws.onmessage = (e) => {
+        statusEl.textContent = e.data.replace("STATUS#", "").replace("DATA#", "回傳: ");
+      };
+      ws.onclose = () => {
+        statusEl.textContent = "連線中斷，請點「重連」";
+        stopMove();
+      };
+    }
+    initWS();
+
+    function reconnect() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) initWS();
+      else ws.send("RECONNECT");
+    }
+
+    function sendCmd(cmd) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(cmd);
+    }
+
+    function toggleVideo() {
+      const img = document.getElementById("stream");
+      videoOn = !videoOn;
+      img.src = videoOn ? `/video_feed?t=${Date.now()}` : "";
+    }
+
+    const moveMap = {
+      forward: "CMD_MOVE#1#8",
+      backward: "CMD_MOVE#2#8",
+      turn_left: "CMD_MOVE#3#8",
+      turn_right: "CMD_MOVE#4#8",
+      step_left: "CMD_MOVE#5#8",
+      step_right: "CMD_MOVE#6#8"
+    };
+
+    function stopMove() {
+      sendCmd("CMD_MOVE#0#0");
+      document.querySelectorAll(".dpad button").forEach(b => b.classList.remove("active"));
+    }
+
+    document.querySelectorAll(".dpad button[data-dir]").forEach((btn) => {
+      const dir = btn.dataset.dir;
+      btn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        btn.setPointerCapture(e.pointerId);
+        btn.classList.add("active");
+        sendCmd(moveMap[dir]);
+        if (navigator.vibrate) navigator.vibrate(20);
+      });
+      const release = (e) => {
+        e.preventDefault();
+        stopMove();
+      };
+      btn.addEventListener("pointerup", release);
+      btn.addEventListener("pointercancel", release);
+    });
+
+    const buzzerBtn = document.getElementById("btn-buzzer");
+    buzzerBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      buzzerBtn.setPointerCapture(e.pointerId);
+      sendCmd("CMD_BUZZER#1");
+    });
+    buzzerBtn.addEventListener("pointerup", () => sendCmd("CMD_BUZZER#0"));
+    buzzerBtn.addEventListener("pointercancel", () => sendCmd("CMD_BUZZER#0"));
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopMove();
+    });
+  </script>
+</body>
+</html>
