@@ -31,6 +31,21 @@
       .left-pane { flex: 1; }
       .right-pane { flex: 1.1; }
     }
+    .light {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: inline-block;
+      transition: background-color 0.3s, box-shadow 0.3s;
+    }
+    .light.red {
+      background-color: #ff3b30;
+      box-shadow: 0 0 8px #ff3b30;
+    }
+    .light.green {
+      background-color: #34c759;
+      box-shadow: 0 0 10px #34c759;
+    }    
   </style>
 </head>
 <body>
@@ -94,22 +109,73 @@
     let ws;
     let videoOn = false;
     const statusEl = document.getElementById("status");
+    const statusLight = document.getElementById("status-light");
+    const ipInput = document.getElementById("pi-ip-input");
+
+    // 1. 載入上次記憶的 IP
+    if (localStorage.getItem("saved_pi_ip")) {
+      ipInput.value = localStorage.getItem("saved_pi_ip");
+    }
+
+    // 2. 切換紅綠燈號與文字的輔助函式
+    function setConnectionLight(isConnected, message) {
+      statusEl.textContent = message;
+      statusLight.className = isConnected ? "light green" : "light red";
+    }
 
     function initWS() {
       ws = new WebSocket(`ws://${location.host}/ws`);
       ws.onmessage = (e) => {
-        statusEl.textContent = e.data.replace("STATUS#", "").replace("DATA#", "回傳: ");
+        const msg = e.data;
+
+        if (msg.startsWith("CONN_STATE#")) {
+          // 解析後端傳來的紅綠燈狀態: CONN_STATE#CONNECTED#訊息
+          const parts = msg.split("#");
+          const isConnected = parts[1] === "CONNECTED";
+          const text = parts.slice(2).join("#");
+          setConnectionLight(isConnected, text);
+
+        } else if (msg.startsWith("CURRENT_IP#")) {
+          // 若輸入框目前是空的，自動填入 Server 設定的 IP
+          const serverIp = msg.replace("CURRENT_IP#", "");
+          if (!ipInput.value && serverIp) {
+            ipInput.value = serverIp;
+          }
+
+        } else {
+          // 保留原本的 STATUS# 與 DATA# 顯示邏輯
+          statusEl.textContent = msg.replace("STATUS#", "").replace("DATA#", "回傳: ");
+        }
       };
+
       ws.onclose = () => {
-        statusEl.textContent = "連線中斷，請點「重連」";
+        setConnectionLight(false, "與中繼伺服器斷線，請點「連線 / 重連」");
         stopMove();
       };
     }
     initWS();
 
-    function reconnect() {
-      if (!ws || ws.readyState !== WebSocket.OPEN) initWS();
-      else ws.send("RECONNECT");
+    // 3. 按下「連線 / 重連」按鈕時執行
+    function connectWithNewIp() {
+      const newIp = ipInput.value.trim();
+
+      // 若網頁與手機 WebSocket 斷線，先重新建立 WebSocket
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        initWS();
+        if (newIp) localStorage.setItem("saved_pi_ip", newIp);
+        return;
+      }
+
+      if (newIp) {
+        // 儲存新 IP 並傳送給 RobotRelayServer
+        localStorage.setItem("saved_pi_ip", newIp);
+        setConnectionLight(false, `正在連線至 ${newIp}...`);
+        ws.send("SET_IP#" + newIp);
+      } else {
+        // 若沒輸入新 IP，則執行原本的純重連
+        setConnectionLight(false, "正在重新連線...");
+        ws.send("RECONNECT");
+      }
     }
 
     function sendCmd(cmd) {
@@ -166,5 +232,6 @@
       if (document.hidden) stopMove();
     });
   </script>
+
 </body>
 </html>
