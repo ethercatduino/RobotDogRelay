@@ -35,11 +35,19 @@
 </head>
 <body>
   <div class="topbar">
-    <span id="status">連線中...</span>
-    <div class="btns">
-      <button onclick="reconnect()">重連</button>
+    <!-- 1. 狀態燈號與文字（保留原本的 id="status" 避免原本的 JS 報錯） -->
+    <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0;">
+      <span id="status-light" class="light red"></span>
+      <span id="status">連線中...</span>
+    </div>
+
+    <!-- 2. IP 輸入框與按鈕列 -->
+    <div class="btns" style="flex-wrap: wrap;">
+      <input type="text" id="pi-ip-input" placeholder="輸入 Pi IP (例: 192.168.1.100)" style="padding: 6px 10px; border-radius: 6px; border: 1px solid #ccc; width: 170px;" />
+      <button onclick="connectWithNewIp()">連線 / 重連</button>
       <button onclick="toggleVideo()">影像開關</button>
       <button class="danger" onclick="sendCmd('CMD_RELAX')">放鬆</button>
+    </div>
     </div>
   </div>
 
