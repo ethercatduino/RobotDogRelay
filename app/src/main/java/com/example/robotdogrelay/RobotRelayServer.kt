@@ -8,6 +8,7 @@ import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
+import io.ktor.utils.io.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import java.io.BufferedReader
@@ -19,7 +20,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class RobotRelayServer(
-    private val context: Context,
+    private val appContext: Context,
     private val piIp: String,
     private val cmdPort: Int = 5001,
     private val videoPort: Int = 8001
@@ -38,7 +39,7 @@ class RobotRelayServer(
 
             routing {
                 get("/") {
-                    val html = context.assets.open("index.html").bufferedReader().use { it.readText() }
+                    val html = appContext.assets.open("index.html").bufferedReader().use { it.readText() }
                     call.respondText(html, ContentType.Text.Html)
                 }
 
@@ -134,3 +135,4 @@ class RobotRelayServer(
         server?.stop(500, 1000)
     }
 }
+
