@@ -8,7 +8,6 @@ import io.ktor.server.engine.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
-import io.ktor.utils.io.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import java.io.BufferedReader
@@ -20,8 +19,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class RobotRelayServer(
-    private val appContext: Context,
-    private val piIp: String,
+    private val context: Context,
+    private var piIp: String, // 【修改1】改為 var 允許動態更新 IP
     private val cmdPort: Int = 5001,
     private val videoPort: Int = 8001
 ) {
@@ -39,22 +38,41 @@ class RobotRelayServer(
 
             routing {
                 get("/") {
-                    val html = appContext.assets.open("index.html").bufferedReader().use { it.readText() }
+                    val html = context.assets.open("index.html").bufferedReader().use { it.readText() }
                     call.respondText(html, ContentType.Text.Html)
                 }
 
                 webSocket("/ws") {
                     activeWsSession = this
-                    send("STATUS#已連上 Android 中繼")
+                    // 【修改2】連上 WebSocket 時，將目前伺服器設定的 IP 傳給前端顯示
+                    send("CURRENT_IP#$piIp")
+                    
+                    // 若目前已經連上 Pi，同步通知前端亮綠燈
+                    if (cmdSocket?.isConnected == true && cmdSocket?.isClosed == false) {
+                        send("CONN_STATE#CONNECTED#機器狗已連線 ($piIp)")
+                    } else {
+                        send("CONN_STATE#DISCONNECTED#尚未連線至 Pi ($piIp)")
+                    }
 
                     try {
                         for (frame in incoming) {
                             if (frame is Frame.Text) {
                                 val text = frame.readText()
-                                if (text == "RECONNECT") {
-                                    connectToPiCommandSocket()
-                                } else {
-                                    sendToPi(text)
+                                when {
+                                    // 【修改3】接收前端傳來的新 IP 指令
+                                    text.startsWith("SET_IP#") -> {
+                                        val newIp = text.removePrefix("SET_IP#").trim()
+                                        if (newIp.isNotEmpty()) {
+                                            piIp = newIp
+                                            connectToPiCommandSocket()
+                                        }
+                                    }
+                                    text == "RECONNECT" -> {
+                                        connectToPiCommandSocket()
+                                    }
+                                    else -> {
+                                        sendToPi(text)
+                                    }
                                 }
                             }
                         }
@@ -71,6 +89,7 @@ class RobotRelayServer(
                     ) {
                         var vSocket: Socket? = null
                         try {
+                            // 這裡會自動讀取最新的 piIp
                             vSocket = Socket(piIp, videoPort)
                             val input = DataInputStream(vSocket.getInputStream())
                             val lenBuf = ByteArray(4)
@@ -101,19 +120,28 @@ class RobotRelayServer(
     private fun connectToPiCommandSocket() {
         scope.launch {
             try {
+                // 先通知前端正在重連（紅燈）
+                activeWsSession?.send("CONN_STATE#DISCONNECTED#正在連線至 $piIp...")
                 cmdSocket?.close()
+                
                 val socket = Socket(piIp, cmdPort)
                 cmdSocket = socket
                 cmdWriter = PrintWriter(socket.getOutputStream(), true)
-                activeWsSession?.send("STATUS#機器狗已連線 ($piIp)")
+                
+                // 【修改4】連線成功：傳送 CONNECTED 狀態讓前端亮綠燈
+                activeWsSession?.send("CONN_STATE#CONNECTED#機器狗已連線 ($piIp)")
 
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 while (isActive) {
                     val line = reader.readLine() ?: break
                     activeWsSession?.send("DATA#$line")
                 }
+                
+                // 迴圈結束代表 Pi 主動斷線：通知前端亮紅燈
+                activeWsSession?.send("CONN_STATE#DISCONNECTED#Pi 連線已中斷")
             } catch (e: Exception) {
-                activeWsSession?.send("STATUS#Pi 連線失敗: ${e.message}")
+                // 連線失敗：通知前端亮紅燈
+                activeWsSession?.send("CONN_STATE#DISCONNECTED#Pi 連線失敗: ${e.message}")
             }
         }
     }
@@ -121,9 +149,13 @@ class RobotRelayServer(
     private fun sendToPi(cmd: String) {
         scope.launch {
             try {
+                if (cmdSocket == null || cmdSocket?.isClosed == true) {
+                    activeWsSession?.send("CONN_STATE#DISCONNECTED#未連線，無法發送指令")
+                    return@launch
+                }
                 cmdWriter?.println(cmd)
             } catch (_: Exception) {
-                activeWsSession?.send("STATUS#指令發送失敗")
+                activeWsSession?.send("CONN_STATE#DISCONNECTED#指令發送失敗（連線中斷）")
             }
         }
     }
